@@ -5,7 +5,7 @@ struct FtpPathResolver {
 
     func resolveDirectory(_ requestedPath: String, currentDirectory: String) -> String? {
         let components = normalizedComponents(for: requestedPath, currentDirectory: currentDirectory)
-        return "/" + components.joined(separator: "/")
+        return virtualPath(for: components)
     }
 
     func resolveFile(_ requestedPath: String, currentDirectory: String) -> URL? {
@@ -14,9 +14,18 @@ struct FtpPathResolver {
             return nil
         }
 
-        return components.reduce(rootDirectory) { partialResult, component in
-            partialResult.appendingPathComponent(component, isDirectory: false)
-        }
+        return fileURL(for: components)
+    }
+
+    func resolveItem(_ requestedPath: String?, currentDirectory: String) -> URL {
+        let path = requestedPath?.isEmpty == false ? requestedPath! : currentDirectory
+        let components = normalizedComponents(for: path, currentDirectory: currentDirectory)
+        return fileURL(for: components)
+    }
+
+    func resolveVirtualPath(_ requestedPath: String, currentDirectory: String) -> String {
+        let components = normalizedComponents(for: requestedPath, currentDirectory: currentDirectory)
+        return virtualPath(for: components)
     }
 
     private func normalizedComponents(for requestedPath: String, currentDirectory: String) -> [String] {
@@ -41,5 +50,15 @@ struct FtpPathResolver {
 
     private func split(path: String) -> [String] {
         path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+    }
+
+    private func virtualPath(for components: [String]) -> String {
+        "/" + components.joined(separator: "/")
+    }
+
+    private func fileURL(for components: [String]) -> URL {
+        components.reduce(rootDirectory) { partialResult, component in
+            partialResult.appendingPathComponent(component, isDirectory: false)
+        }
     }
 }

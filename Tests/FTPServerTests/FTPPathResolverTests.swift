@@ -25,3 +25,19 @@ import Testing
 
     #expect(result == "/nested/day-01")
 }
+
+@Test func resolvesCurrentDirectoryWhenListPathIsMissing() {
+    let resolver = FtpPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
+
+    let result = resolver.resolveItem(nil, currentDirectory: "/incoming")
+
+    #expect(result.path == "/tmp/ftp-root/incoming")
+}
+
+@Test func resolvesVirtualPathForCreatedDirectory() {
+    let resolver = FtpPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
+
+    let result = resolver.resolveVirtualPath("./batch-01", currentDirectory: "/incoming")
+
+    #expect(result == "/incoming/batch-01")
+}

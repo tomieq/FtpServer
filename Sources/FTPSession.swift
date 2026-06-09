@@ -5,6 +5,7 @@ final class FtpSession {
     private let configuration: FtpServerConfiguration
     private let forceIPv4: Bool
     private let pathResolver: FtpPathResolver
+    private let listEntryFormatter = FtpListEntryFormatter()
 
     private var currentDirectory = "/"
     private var pendingUsername: String?
@@ -64,6 +65,10 @@ final class FtpSession {
                 handleEpsv()
             case "STOR":
                 handleStor(argument)
+            case "LIST":
+                handleList(argument)
+            case "MKD":
+                handleMkd(argument)
             case "NOOP":
                 sendResponse(200, "NOOP ok")
             case "PORT", "EPRT":
@@ -239,6 +244,61 @@ final class FtpSession {
         }
     }
 
+    private func handleList(_ argument: String?) {
+        guard requireAuthentication() else {
+            return
+        }
+
+        guard let passiveListener else {
+            sendResponse(425, "Use PASV or EPSV first")
+            return
+        }
+
+        let requestedPath = listPath(from: argument)
+        let targetURL = pathResolver.resolveItem(requestedPath, currentDirectory: currentDirectory)
+        sendResponse(150, "Opening data connection")
+
+        do {
+            let transferSocket = try passiveListener.acceptClientSocket()
+            defer {
+                transferSocket.close()
+                closePassiveListener()
+            }
+
+            let listing = try directoryListing(for: targetURL)
+            try transferSocket.writeUTF8(listing)
+            sendResponse(226, "Transfer complete")
+        } catch {
+            closePassiveListener()
+            sendResponse(451, "Transfer aborted")
+        }
+    }
+
+    private func handleMkd(_ argument: String?) {
+        guard requireAuthentication() else {
+            return
+        }
+
+        guard let argument, !argument.isEmpty else {
+            sendResponse(501, "Missing directory name")
+            return
+        }
+
+        let directoryURL = pathResolver.resolveItem(argument, currentDirectory: currentDirectory)
+        let virtualPath = pathResolver.resolveVirtualPath(argument, currentDirectory: currentDirectory)
+
+        do {
+            try FileManager.default.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            sendResponse(257, "\"\(virtualPath)\" created")
+        } catch {
+            sendResponse(550, "Failed to create directory")
+        }
+    }
+
     private func openPassiveListener(forceIPv4: Bool) throws -> Socket {
         closePassiveListener()
 
@@ -270,6 +330,42 @@ final class FtpSession {
     private func closePassiveListener() {
         passiveListener?.close()
         passiveListener = nil
+    }
+
+    private func listPath(from argument: String?) -> String? {
+        guard let argument else {
+            return nil
+        }
+
+        let tokens = argument.split(separator: " ", omittingEmptySubsequences: true)
+        guard let pathToken = tokens.last(where: { !$0.hasPrefix("-") }) else {
+            return nil
+        }
+
+        return String(pathToken)
+    }
+
+    private func directoryListing(for targetURL: URL) throws -> String {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: targetURL.path, isDirectory: &isDirectory) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+
+        let lines: [String]
+        if isDirectory.boolValue {
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: targetURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+            lines = try contents
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                .map(listEntryFormatter.line(for:))
+        } else {
+            lines = [try listEntryFormatter.line(for: targetURL)]
+        }
+
+        return lines.joined(separator: "\r\n") + "\r\n"
     }
 
     @discardableResult
