@@ -50,31 +50,34 @@ open class Socket: Hashable, Equatable {
 
     public var port: in_port_t {
         get throws {
-            var addr = sockaddr_in()
-            return try withUnsafePointer(to: &addr) { pointer in
-                var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-                if getsockname(socketFileDescriptor, UnsafeMutablePointer(OpaquePointer(pointer)), &len) != 0 {
-                    throw SocketError.getSockNameFailed(Errno.description())
+            let address = try socketAddress(using: getsockname)
+            switch Int32(address.ss_family) {
+            case AF_INET:
+                let ipv4 = withUnsafePointer(to: address) {
+                    $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                        $0.pointee
+                    }
                 }
-                let sin_port = pointer.pointee.sin_port
-                #if os(Linux)
-                return ntohs(sin_port)
-                #else
-                return Int(OSHostByteOrder()) != OSLittleEndian ? sin_port.littleEndian : sin_port.bigEndian
-                #endif
+                return in_port_t(bigEndian: ipv4.sin_port)
+            case AF_INET6:
+                let ipv6 = withUnsafePointer(to: address) {
+                    $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                        $0.pointee
+                    }
+                }
+                return in_port_t(bigEndian: ipv6.sin6_port)
+            default:
+                throw SocketError.getSockNameFailed("Unsupported address family")
             }
         }
     }
 
     public func isIPv4() throws -> Bool {
-        var addr = sockaddr_in()
-        return try withUnsafePointer(to: &addr) { pointer in
-            var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-            if getsockname(socketFileDescriptor, UnsafeMutablePointer(OpaquePointer(pointer)), &len) != 0 {
-                throw SocketError.getSockNameFailed(Errno.description())
-            }
-            return Int32(pointer.pointee.sin_family) == AF_INET
-        }
+        try Int32(socketAddress(using: getsockname).ss_family) == AF_INET
+    }
+
+    public var localIPAddress: String? {
+        try? ipAddress(using: getsockname)
     }
 
     public func writeUTF8(_ string: String) throws {
@@ -157,7 +160,6 @@ open class Socket: Hashable, Equatable {
         if bytesRead > 0 {
             return Data(buffer.prefix(bytesRead))
         } else if bytesRead == 0 {
-            // EOF: klient zamknął połączenie
             return nil
         } else {
             throw SocketError.recvFailed(Errno.description())
@@ -177,31 +179,53 @@ open class Socket: Hashable, Equatable {
         return characters
     }
     
-    lazy var peerIP: String? = {
-        var addr = sockaddr_storage()
-        var addrLen = socklen_t(MemoryLayout<sockaddr_storage>.size)
-        
-        if getpeername(socketFileDescriptor, withUnsafeMutablePointer(to: &addr) {
-            UnsafeMutableRawPointer($0).assumingMemoryBound(to: sockaddr.self)
-        }, &addrLen) != 0 {
-            return nil
-        }
-        
-        var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        let result = withUnsafePointer(to: &addr) {
+    public var peerIP: String? {
+        try? ipAddress(using: getpeername)
+    }
+
+    private func socketAddress(using provider: (Int32, UnsafeMutablePointer<sockaddr>?, UnsafeMutablePointer<socklen_t>?) -> Int32) throws -> sockaddr_storage {
+        var address = sockaddr_storage()
+        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let result = withUnsafeMutablePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                getnameinfo($0, addrLen, &hostBuffer, socklen_t(hostBuffer.count), nil, 0, NI_NUMERICHOST)
+                provider(self.socketFileDescriptor, $0, &length)
             }
         }
-        return result == 0 ? String(cString: hostBuffer) : nil
-    }()
+        guard result == 0 else {
+            throw SocketError.getSockNameFailed(Errno.description())
+        }
+        return address
+    }
+
+    private func ipAddress(using provider: (Int32, UnsafeMutablePointer<sockaddr>?, UnsafeMutablePointer<socklen_t>?) -> Int32) throws -> String {
+        var address = sockaddr_storage()
+        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let providerResult = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                provider(self.socketFileDescriptor, $0, &length)
+            }
+        }
+        guard providerResult == 0 else {
+            throw SocketError.getSockNameFailed(Errno.description())
+        }
+
+        var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let nameInfoResult = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getnameinfo($0, length, &hostBuffer, socklen_t(hostBuffer.count), nil, 0, NI_NUMERICHOST)
+            }
+        }
+
+        guard nameInfoResult == 0 else {
+            throw SocketError.getNameInfoFailed(Errno.description())
+        }
+
+        return String(cString: hostBuffer)
+    }
 
     public class func setNoSigPipe(_ socket: Int32) {
         #if os(Linux)
-            // There is no SO_NOSIGPIPE in Linux (nor some other systems). You can instead use the MSG_NOSIGNAL flag when calling send(),
-            // or use signal(SIGPIPE, SIG_IGN) to make your entire application ignore SIGPIPE.
         #else
-            // Prevents crashes when blocking calls are pending and the app is paused ( via Home button ).
             var no_sig_pipe: Int32 = 1
             setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &no_sig_pipe, socklen_t(MemoryLayout<Int32>.size))
         #endif

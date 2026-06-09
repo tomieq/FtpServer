@@ -104,9 +104,13 @@ extension Socket {
     }
 
     public func acceptClientSocket() throws -> Socket {
-        var addr = sockaddr()
-        var len: socklen_t = 0
-        let clientSocket = accept(self.socketFileDescriptor, &addr, &len)
+        var addr = sockaddr_storage()
+        var len = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let clientSocket = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                accept(self.socketFileDescriptor, $0, &len)
+            }
+        }
         if clientSocket == -1 {
             throw SocketError.acceptFailed(Errno.description())
         }

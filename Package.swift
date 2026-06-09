@@ -4,20 +4,21 @@
 import PackageDescription
 
 let package = Package(
-    name: "ftpServer",
+    name: "FTPServer",
     platforms: [
         .macOS(.v13)
     ],
-    dependencies: [
-        .package(url: "https://github.com/tomieq/SwiftExtensions", .upToNextMajor(from: "2.0.0"))
+    products: [
+        .library(
+            name: "FTPServer",
+            targets: ["FTPServer"])
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
-        .executableTarget(
-            name: "ftpServer",
-            dependencies: [
-                .product(name: "SwiftExtensions", package: "SwiftExtensions")
-            ]),
+        .target(
+            name: "FTPServer",
+            path: "Sources"),
+        .testTarget(
+            name: "FTPServerTests",
+            dependencies: ["FTPServer"])
     ]
 )

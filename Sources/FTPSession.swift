@@ -1,0 +1,292 @@
+import Foundation
+
+final class FTPSession {
+    private let controlSocket: Socket
+    private let configuration: FTPServerConfiguration
+    private let forceIPv4: Bool
+    private let pathResolver: FTPPathResolver
+
+    private var currentDirectory = "/"
+    private var pendingUsername: String?
+    private var isAuthenticated: Bool
+    private var passiveListener: Socket?
+
+    init(controlSocket: Socket, configuration: FTPServerConfiguration, forceIPv4: Bool) {
+        self.controlSocket = controlSocket
+        self.configuration = configuration
+        self.forceIPv4 = forceIPv4
+        self.pathResolver = FTPPathResolver(rootDirectory: configuration.rootDirectory)
+        self.isAuthenticated = !configuration.requiresAuthentication
+    }
+
+    deinit {
+        passiveListener?.close()
+    }
+
+    func run() {
+        sendResponse(220, "Swift FTP server ready")
+
+        while let commandLine = try? controlSocket.readLine() {
+            let sanitizedLine = commandLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !sanitizedLine.isEmpty else {
+                continue
+            }
+
+            let parts = sanitizedLine.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
+            let command = parts[0].uppercased()
+            let argument = parts.count > 1 ? String(parts[1]) : nil
+
+            switch command {
+            case "USER":
+                handleUser(argument)
+            case "PASS":
+                handlePass(argument)
+            case "SYST":
+                sendResponse(215, "UNIX Type: L8")
+            case "TYPE":
+                sendResponse(200, "Type set")
+            case "FEAT":
+                sendMultilineResponse([
+                    "211-Extensions supported",
+                    " PASV",
+                    " EPSV",
+                    "211 End"
+                ])
+            case "PWD":
+                sendResponse(257, "\"\(currentDirectory)\"")
+            case "CWD":
+                handleCwd(argument)
+            case "CDUP":
+                handleCwd("..")
+            case "PASV":
+                handlePasv()
+            case "EPSV":
+                handleEpsv()
+            case "STOR":
+                handleStor(argument)
+            case "NOOP":
+                sendResponse(200, "NOOP ok")
+            case "PORT", "EPRT":
+                sendResponse(502, "Active mode is not supported")
+            case "QUIT":
+                sendResponse(221, "Goodbye")
+                return
+            default:
+                sendResponse(502, "Command not implemented")
+            }
+        }
+    }
+
+    private func handleUser(_ argument: String?) {
+        guard let argument, !argument.isEmpty else {
+            sendResponse(501, "Missing username")
+            return
+        }
+
+        pendingUsername = argument
+        if configuration.requiresAuthentication {
+            sendResponse(331, "User name okay, need password")
+        } else {
+            isAuthenticated = true
+            sendResponse(230, "User logged in")
+        }
+    }
+
+    private func handlePass(_ argument: String?) {
+        guard configuration.requiresAuthentication else {
+            isAuthenticated = true
+            sendResponse(230, "User logged in")
+            return
+        }
+
+        guard let pendingUsername else {
+            sendResponse(503, "Send USER first")
+            return
+        }
+
+        if configuration.accepts(user: pendingUsername, password: argument) {
+            isAuthenticated = true
+            sendResponse(230, "User logged in")
+        } else {
+            isAuthenticated = false
+            sendResponse(530, "Authentication failed")
+        }
+    }
+
+    private func handleCwd(_ argument: String?) {
+        guard requireAuthentication() else {
+            return
+        }
+
+        guard let argument, !argument.isEmpty else {
+            sendResponse(501, "Missing directory")
+            return
+        }
+
+        guard let resolvedDirectory = pathResolver.resolveDirectory(argument, currentDirectory: currentDirectory) else {
+            sendResponse(550, "Invalid directory")
+            return
+        }
+
+        currentDirectory = resolvedDirectory
+        sendResponse(250, "Directory changed")
+    }
+
+    private func handlePasv() {
+        guard requireAuthentication() else {
+            return
+        }
+
+        guard forceIPv4 else {
+            sendResponse(522, "Use EPSV for IPv6 connections")
+            return
+        }
+
+        do {
+            let passiveListener = try openPassiveListener(forceIPv4: true)
+            guard let address = configuration.passiveAddressIPv4 ?? controlSocket.localIPAddress else {
+                passiveListener.close()
+                self.passiveListener = nil
+                sendResponse(425, "Configure passiveAddressIPv4 for passive mode")
+                return
+            }
+
+            let port = Int(try passiveListener.port)
+            let p1 = port / 256
+            let p2 = port % 256
+            let octets = address.split(separator: ".")
+
+            guard octets.count == 4 else {
+                passiveListener.close()
+                self.passiveListener = nil
+                sendResponse(425, "Passive mode requires an IPv4 address")
+                return
+            }
+
+            sendResponse(227, "Entering Passive Mode (\(octets.joined(separator: ",")),\(p1),\(p2))")
+        } catch {
+            sendResponse(425, "Can't open passive data connection")
+        }
+    }
+
+    private func handleEpsv() {
+        guard requireAuthentication() else {
+            return
+        }
+
+        do {
+            let passiveListener = try openPassiveListener(forceIPv4: forceIPv4)
+            let port = try passiveListener.port
+            sendResponse(229, "Entering Extended Passive Mode (|||\(port)|)")
+        } catch {
+            sendResponse(425, "Can't open passive data connection")
+        }
+    }
+
+    private func handleStor(_ argument: String?) {
+        guard requireAuthentication() else {
+            return
+        }
+
+        guard let argument, !argument.isEmpty else {
+            sendResponse(501, "Missing file name")
+            return
+        }
+
+        guard let passiveListener else {
+            sendResponse(425, "Use PASV or EPSV first")
+            return
+        }
+
+        guard let destinationURL = pathResolver.resolveFile(argument, currentDirectory: currentDirectory) else {
+            closePassiveListener()
+            sendResponse(553, "Invalid file name")
+            return
+        }
+
+        sendResponse(150, "Opening data connection")
+
+        do {
+            let transferSocket = try passiveListener.acceptClientSocket()
+            defer {
+                transferSocket.close()
+                closePassiveListener()
+            }
+
+            try FileManager.default.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+
+            try Data().write(to: destinationURL)
+            let handle = try FileHandle(forWritingTo: destinationURL)
+            defer {
+                try? handle.close()
+            }
+
+            var totalBytes = 0
+            while let chunk = try transferSocket.consumeAvailable() {
+                totalBytes += chunk.count
+                handle.write(chunk)
+            }
+
+            configuration.onFileStored?(destinationURL, totalBytes)
+            sendResponse(226, "Transfer complete")
+        } catch {
+            closePassiveListener()
+            sendResponse(451, "Transfer aborted")
+        }
+    }
+
+    private func openPassiveListener(forceIPv4: Bool) throws -> Socket {
+        closePassiveListener()
+
+        if let passivePortRange = configuration.passivePortRange {
+            for port in passivePortRange {
+                if let listener = try? Socket.tcpSocketForListen(
+                    in_port_t(port),
+                    forceIPv4,
+                    SOMAXCONN,
+                    forceIPv4 ? configuration.bindAddressIPv4 : configuration.bindAddressIPv6
+                ) {
+                    passiveListener = listener
+                    return listener
+                }
+            }
+            throw SocketError.listenFailed("No passive port available in configured range")
+        }
+
+        let listener = try Socket.tcpSocketForListen(
+            0,
+            forceIPv4,
+            SOMAXCONN,
+            forceIPv4 ? configuration.bindAddressIPv4 : configuration.bindAddressIPv6
+        )
+        passiveListener = listener
+        return listener
+    }
+
+    private func closePassiveListener() {
+        passiveListener?.close()
+        passiveListener = nil
+    }
+
+    @discardableResult
+    private func requireAuthentication() -> Bool {
+        guard isAuthenticated else {
+            sendResponse(530, "Please log in")
+            return false
+        }
+        return true
+    }
+
+    private func sendResponse(_ code: Int, _ message: String) {
+        try? controlSocket.writeUTF8("\(code) \(message)\r\n")
+    }
+
+    private func sendMultilineResponse(_ lines: [String]) {
+        let payload = lines.joined(separator: "\r\n") + "\r\n"
+        try? controlSocket.writeUTF8(payload)
+    }
+}
