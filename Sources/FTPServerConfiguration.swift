@@ -1,6 +1,6 @@
 import Foundation
 
-public struct FTPServerConfiguration {
+public struct FtpServerConfiguration: Sendable {
     public var rootDirectory: URL
     public var username: String?
     public var password: String?
@@ -8,7 +8,7 @@ public struct FTPServerConfiguration {
     public var bindAddressIPv6: String?
     public var passiveAddressIPv4: String?
     public var passivePortRange: ClosedRange<UInt16>?
-    public var onFileStored: ((URL, Int) -> Void)?
+    public let onFileStored: (@Sendable (URL, Int) -> Void)?
 
     public init(
         rootDirectory: URL,
@@ -18,7 +18,7 @@ public struct FTPServerConfiguration {
         bindAddressIPv6: String? = nil,
         passiveAddressIPv4: String? = nil,
         passivePortRange: ClosedRange<UInt16>? = nil,
-        onFileStored: ((URL, Int) -> Void)? = nil
+        onFileStored: (@Sendable (URL, Int) -> Void)? = nil
     ) {
         self.rootDirectory = rootDirectory
         self.username = username

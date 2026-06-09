@@ -1,9 +1,9 @@
 import Foundation
 import Testing
-@testable import FTPServer
+@testable import FtpServer
 
 @Test func resolvesRelativeFileInsideRoot() {
-    let resolver = FTPPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
+    let resolver = FtpPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
 
     let result = resolver.resolveFile("incoming/cam001.jpg", currentDirectory: "/")
 
@@ -11,7 +11,7 @@ import Testing
 }
 
 @Test func keepsDirectoryTraversalInsideRoot() {
-    let resolver = FTPPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
+    let resolver = FtpPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
 
     let result = resolver.resolveFile("../../escape.jpg", currentDirectory: "/incoming")
 
@@ -19,7 +19,7 @@ import Testing
 }
 
 @Test func resolvesAbsoluteDirectoryFromRoot() {
-    let resolver = FTPPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
+    let resolver = FtpPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
 
     let result = resolver.resolveDirectory("/nested/day-01", currentDirectory: "/incoming")
 

@@ -22,11 +22,12 @@ public enum SocketError: Error {
 }
 
 // swiftlint: disable identifier_name
-open class Socket: Hashable, Equatable {
+open class Socket: Hashable, Equatable, @unchecked Sendable {
 
     let id = UUID()
     let socketFileDescriptor: Int32
     private var shutdown = false
+    private let shutdownLock = NSLock()
 
     public init(socketFileDescriptor: Int32) {
         self.socketFileDescriptor = socketFileDescriptor
@@ -41,9 +42,13 @@ open class Socket: Hashable, Equatable {
     }
 
     public func close() {
+        shutdownLock.lock()
+        defer { shutdownLock.unlock() }
+
         if shutdown {
             return
         }
+
         shutdown = true
         Socket.close(self.socketFileDescriptor)
     }
@@ -220,7 +225,8 @@ open class Socket: Hashable, Equatable {
             throw SocketError.getNameInfoFailed(Errno.description())
         }
 
-        return String(cString: hostBuffer)
+        let hostBytes = hostBuffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(decoding: hostBytes, as: UTF8.self)
     }
 
     public class func setNoSigPipe(_ socket: Int32) {

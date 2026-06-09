@@ -1,21 +1,21 @@
 import Foundation
 
-final class FTPSession {
+final class FtpSession {
     private let controlSocket: Socket
-    private let configuration: FTPServerConfiguration
+    private let configuration: FtpServerConfiguration
     private let forceIPv4: Bool
-    private let pathResolver: FTPPathResolver
+    private let pathResolver: FtpPathResolver
 
     private var currentDirectory = "/"
     private var pendingUsername: String?
     private var isAuthenticated: Bool
     private var passiveListener: Socket?
 
-    init(controlSocket: Socket, configuration: FTPServerConfiguration, forceIPv4: Bool) {
+    init(controlSocket: Socket, configuration: FtpServerConfiguration, forceIPv4: Bool) {
         self.controlSocket = controlSocket
         self.configuration = configuration
         self.forceIPv4 = forceIPv4
-        self.pathResolver = FTPPathResolver(rootDirectory: configuration.rootDirectory)
+        self.pathResolver = FtpPathResolver(rootDirectory: configuration.rootDirectory)
         self.isAuthenticated = !configuration.requiresAuthentication
     }
 

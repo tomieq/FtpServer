@@ -1,6 +1,6 @@
 import Foundation
 
-struct FTPPathResolver {
+struct FtpPathResolver {
     let rootDirectory: URL
 
     func resolveDirectory(_ requestedPath: String, currentDirectory: String) -> String? {

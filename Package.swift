@@ -1,24 +1,24 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
 let package = Package(
-    name: "FTPServer",
+    name: "FtpServer",
     platforms: [
         .macOS(.v13)
     ],
     products: [
         .library(
-            name: "FTPServer",
-            targets: ["FTPServer"])
+            name: "FtpServer",
+            targets: ["FtpServer"])
     ],
     targets: [
         .target(
-            name: "FTPServer",
+            name: "FtpServer",
             path: "Sources"),
         .testTarget(
-            name: "FTPServerTests",
-            dependencies: ["FTPServer"])
+            name: "FtpServerTests",
+            dependencies: ["FtpServer"])
     ]
 )

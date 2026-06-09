@@ -1,7 +1,7 @@
 import Dispatch
 import Foundation
 
-public final class FTPServer {
+public final class FtpServer: @unchecked Sendable {
     public enum State {
         case starting
         case running
@@ -9,7 +9,30 @@ public final class FTPServer {
         case stopped
     }
 
-    public let configuration: FTPServerConfiguration
+    public enum Priority: Sendable {
+        case background
+        case utility
+        case `default`
+        case userInitiated
+        case userInteractive
+
+        var dispatchQoS: DispatchQoS.QoSClass {
+            switch self {
+            case .background:
+                return .background
+            case .utility:
+                return .utility
+            case .default:
+                return .default
+            case .userInitiated:
+                return .userInitiated
+            case .userInteractive:
+                return .userInteractive
+            }
+        }
+    }
+
+    public let configuration: FtpServerConfiguration
 
     private let clientQueue = DispatchQueue(label: "FTPServer.client-sockets")
     private let stateLock = NSLock()
@@ -18,7 +41,7 @@ public final class FTPServer {
     private var clientSockets = Set<Socket>()
     private var stateValue: State = .stopped
 
-    public init(configuration: FTPServerConfiguration) {
+    public init(configuration: FtpServerConfiguration) {
         self.configuration = configuration
     }
 
@@ -48,7 +71,7 @@ public final class FTPServer {
     public func start(
         port: in_port_t = 21,
         forceIPv4: Bool = true,
-        priority: DispatchQoS.QoSClass = .background
+        priority: Priority = .background
     ) throws {
         guard !isRunning else {
             return
@@ -59,8 +82,9 @@ public final class FTPServer {
         let listener = try Socket.tcpSocketForListen(port, forceIPv4, SOMAXCONN, listenAddress)
         self.listener = listener
         setState(.running)
+        let dispatchQoS = priority.dispatchQoS
 
-        DispatchQueue.global(qos: priority).async { [weak self] in
+        DispatchQueue.global(qos: dispatchQoS).async { [weak self] in
             self?.acceptLoop(listener: listener, forceIPv4: forceIPv4, priority: priority)
         }
     }
@@ -84,15 +108,16 @@ public final class FTPServer {
         setState(.stopped)
     }
 
-    private func acceptLoop(listener: Socket, forceIPv4: Bool, priority: DispatchQoS.QoSClass) {
+    private func acceptLoop(listener: Socket, forceIPv4: Bool, priority: Priority) {
         while isRunning {
             do {
                 let client = try listener.acceptClientSocket()
                 _ = clientQueue.sync {
                     clientSockets.insert(client)
                 }
+                let dispatchQoS = priority.dispatchQoS
 
-                DispatchQueue.global(qos: priority).async { [weak self] in
+                DispatchQueue.global(qos: dispatchQoS).async { [weak self] in
                     guard let self else {
                         client.close()
                         return
@@ -105,7 +130,7 @@ public final class FTPServer {
                         }
                     }
 
-                    let session = FTPSession(
+                    let session = FtpSession(
                         controlSocket: client,
                         configuration: self.configuration,
                         forceIPv4: forceIPv4
