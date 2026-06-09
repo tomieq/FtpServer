@@ -41,3 +41,11 @@ import Testing
 
     #expect(result == "/incoming/batch-01")
 }
+
+@Test func resolvesDeleteTargetInsideCurrentDirectory() {
+    let resolver = FtpPathResolver(rootDirectory: URL(fileURLWithPath: "/tmp/ftp-root", isDirectory: true))
+
+    let result = resolver.resolveItem("frame.jpg", currentDirectory: "/incoming")
+
+    #expect(result.path == "/tmp/ftp-root/incoming/frame.jpg")
+}

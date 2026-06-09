@@ -69,6 +69,10 @@ final class FtpSession {
                 handleList(argument)
             case "MKD":
                 handleMkd(argument)
+            case "DELE":
+                handleDele(argument)
+            case "RMD":
+                handleRmd(argument)
             case "NOOP":
                 sendResponse(200, "NOOP ok")
             case "PORT", "EPRT":
@@ -296,6 +300,66 @@ final class FtpSession {
             sendResponse(257, "\"\(virtualPath)\" created")
         } catch {
             sendResponse(550, "Failed to create directory")
+        }
+    }
+
+    private func handleDele(_ argument: String?) {
+        guard requireAuthentication() else {
+            return
+        }
+
+        guard let argument, !argument.isEmpty else {
+            sendResponse(501, "Missing file name")
+            return
+        }
+
+        let targetURL = pathResolver.resolveItem(argument, currentDirectory: currentDirectory)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: targetURL.path, isDirectory: &isDirectory) else {
+            sendResponse(550, "File not found")
+            return
+        }
+
+        guard !isDirectory.boolValue else {
+            sendResponse(550, "Requested path is a directory")
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: targetURL)
+            sendResponse(250, "File deleted")
+        } catch {
+            sendResponse(550, "Failed to delete file")
+        }
+    }
+
+    private func handleRmd(_ argument: String?) {
+        guard requireAuthentication() else {
+            return
+        }
+
+        guard let argument, !argument.isEmpty else {
+            sendResponse(501, "Missing directory name")
+            return
+        }
+
+        let targetURL = pathResolver.resolveItem(argument, currentDirectory: currentDirectory)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: targetURL.path, isDirectory: &isDirectory) else {
+            sendResponse(550, "Directory not found")
+            return
+        }
+
+        guard isDirectory.boolValue else {
+            sendResponse(550, "Requested path is not a directory")
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: targetURL)
+            sendResponse(250, "Directory removed")
+        } catch {
+            sendResponse(550, "Failed to remove directory")
         }
     }
 
